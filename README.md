@@ -17,8 +17,9 @@ This repo is built in weekly milestones; each lands as its own commit.
 - **M1 ✅ — scaffold + passthrough proxy.** FastAPI proxy forwards Messages-style
   requests to an upstream (Anthropic by default), with a pluggable/mockable
   upstream, a pure-Python policy core, and a first keyword-based input guard.
-- **M2 — input guard.** Replace the M1 heuristic with the `llm-redteam`
-  injection/jailbreak detectors; block/allow per policy.
+- **M2 ✅ — input guard.** An ensemble of injection/jailbreak detectors
+  (`detectors.py`, in the `llm-redteam` style) scores inbound prompts; the
+  guard blocks/allows per policy.
 - **M3 — output guard.** Wire `llm-reliability-kit` hallucination/faithfulness
   scoring on responses; flag or redact.
 - **M4 — streaming, YAML policy config, request logging/dashboard, demo.**
