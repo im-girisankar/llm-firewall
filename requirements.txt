@@ -1,0 +1,5 @@
+# Core has no runtime deps. For the proxy server, install the extras:
+#   pip install -e ".[server]"
+fastapi>=0.110
+uvicorn>=0.27
+httpx>=0.27

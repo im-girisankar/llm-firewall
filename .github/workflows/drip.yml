@@ -1,0 +1,40 @@
+name: weekly-milestone
+
+# Releases one pre-built milestone per run. The commit is authored as the repo
+# owner and dated the day the run fires (no pre-stamped dates). Manual runs
+# (workflow_dispatch) are used to test; the weekly cron drives the real cadence.
+on:
+  schedule:
+    - cron: "23 5 * * 0" # Sundays 05:23 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: weekly-milestone
+  cancel-in-progress: false
+
+jobs:
+  drip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.DRIP_TOKEN }}
+          fetch-depth: 0
+
+      - name: Apply next milestone
+        run: bash scripts/apply_next.sh
+
+      - name: Commit & push
+        run: |
+          if [ -f .drip/_noop ]; then
+            echo "Queue is empty — nothing to commit."
+            exit 0
+          fi
+          git config user.name "Girisankar G"
+          git config user.email "girisankargopakumar@gmail.com"
+          git commit -F .drip/_commit_msg \
+            --author="Girisankar G <girisankargopakumar@gmail.com>"
+          git push
