@@ -1,0 +1,6 @@
+M2: input guard — injection/jailbreak detector ensemble
+
+Replaces the M1 keyword heuristic with an ensemble of independent
+injection/jailbreak detectors (override, role-reassignment, system-prompt
+exfiltration, jailbreak personas, injected role tags). Aggregate score is the
+max over detector signals; block/allow per policy. Adds detector tests.
