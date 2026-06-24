@@ -34,8 +34,26 @@ This repo is built in weekly milestones; each lands as its own commit.
 
   **Pluggable seam.**  `OutputGuard` accepts an optional `score_fn` argument —
   any callable `(response, context) -> (float, list[str])`.  Drop in a
-  stronger scorer (e.g. `trust-probe` cosine similarity or the HRI metric from
-  `llm-reliability-kit`) without touching the proxy or policy layers.
+  stronger scorer without touching the proxy or policy layers.
+
+  **Reliability-kit integration.**  `llm_firewall.reliability` ships a ready-made
+  bridge to the real `llm-reliability-kit` faithfulness scorer:
+
+  ```python
+  from llm_firewall.guards import OutputGuard
+  from llm_firewall.reliability import reliability_kit_score_fn
+
+  guard = OutputGuard(score_fn=reliability_kit_score_fn())
+  ```
+
+  `reliability_kit_score_fn()` returns a `score_fn` that calls
+  `llm_reliability_kit.faithfulness.faithfulness_score(response, context)` and
+  maps it to hallucination risk as `risk = 1 − faithfulness`.  This is the real
+  composition of the two repos end-to-end.  Pass `use_nli=True` to upgrade to
+  the NLI sentence-support checker (requires
+  `pip install 'llm-reliability-kit[nli]'`).  Importing `reliability.py` does
+  **not** require `llm-reliability-kit` to be installed — the import happens
+  lazily inside the returned callable.
 
   **Context resolution** (priority order): a top-level `context` field in the
   request body → the `system` prompt → empty string (scoring skipped).

@@ -146,9 +146,17 @@ class OutputGuard:
 
         * ``trust-probe`` cosine similarity between the response and the
           context embeddings (needs ``sentence-transformers``).
-        * The HRI (Hallucination Risk Index) metric from
-          ``llm-reliability-kit``, which combines NLI entailment with
-          entity-level grounding.
+        * The real ``llm-reliability-kit`` HRI scorer via the bridge in
+          :mod:`llm_firewall.reliability`::
+
+              from llm_firewall.reliability import reliability_kit_score_fn
+              guard = OutputGuard(score_fn=reliability_kit_score_fn())
+
+          This wires the actual ``faithfulness_score`` from
+          ``llm-reliability-kit`` (``1 − faithfulness`` = hallucination risk)
+          as the ``score_fn``, composing the two repos end-to-end.  Pass
+          ``use_nli=True`` to upgrade to the NLI-backed sentence-support
+          checker (requires ``pip install 'llm-reliability-kit[nli]'``).
 
         Any callable matching the ``ScoreFn`` signature works.
     """
