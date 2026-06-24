@@ -2,9 +2,12 @@
 
 Inbound requests are screened by the :class:`InputGuard`; if allowed, the body
 is forwarded verbatim to the configured upstream (Anthropic's Messages API by
-default) and the response is returned. The upstream call goes through a small
-``Upstream`` protocol so tests can inject a mock and the core path runs with no
-network and no API key.
+default) and the response is returned.  The upstream response is then screened
+by the :class:`OutputGuard` for hallucination / faithfulness before being
+passed back to the caller.
+
+The upstream call goes through a small ``Upstream`` protocol so tests can
+inject a mock and the core path runs with no network and no API key.
 
 FastAPI/httpx are imported lazily (the optional ``server`` extra) so importing
 this module — and the rest of the package — never requires them.
@@ -16,7 +19,7 @@ import os
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from llm_firewall.guards import InputGuard
+from llm_firewall.guards import InputGuard, OutputGuard
 from llm_firewall.policy import Policy
 
 # An upstream is any async callable: json body -> (status_code, json response).
@@ -63,12 +66,66 @@ def _extract_prompt(body: dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
-def create_app(upstream: Upstream | None = None, policy: Policy | None = None):
-    """Build the FastAPI app. ``upstream`` defaults to the real httpx forwarder."""
+def _extract_response_text(payload: dict[str, Any]) -> str:
+    """Extract the assistant's text from an Anthropic Messages response payload.
+
+    The ``content`` field is a list of blocks; we collect those whose ``type``
+    is ``"text"`` and join them.
+    """
+    parts: list[str] = []
+    for block in payload.get("content", []):
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "text":
+            # Support both object-style (.text) and dict-style (["text"]) access.
+            text = block.get("text", "")
+            if text:
+                parts.append(text)
+    return "\n".join(parts)
+
+
+def _extract_context(body: dict[str, Any]) -> str:
+    """Derive the faithfulness reference context from a request body.
+
+    Priority:
+    1. A top-level ``context`` field in the request body.
+    2. The system prompt (``system`` field).
+
+    When neither is present we return an empty string so that
+    :func:`~llm_firewall.guards.faithfulness_risk` skips scoring — without an
+    explicit reference document we cannot judge faithfulness, and scoring the
+    response against the bare user question would produce spurious blocks.
+    """
+    if body.get("context"):
+        return str(body["context"])
+    if body.get("system"):
+        return str(body["system"])
+    return ""
+
+
+def create_app(
+    upstream: Upstream | None = None,
+    policy: Policy | None = None,
+    output_policy: Policy | None = None,
+) -> Any:
+    """Build the FastAPI app.
+
+    Parameters
+    ----------
+    upstream:
+        Async callable forwarding the request body to an LLM backend.
+        Defaults to the real httpx forwarder.
+    policy:
+        Input-guard policy (injection / jailbreak thresholds).
+    output_policy:
+        Output-guard policy (faithfulness / hallucination thresholds).
+        Defaults to the shared *policy* when provided, otherwise ``Policy()``.
+    """
     from fastapi import FastAPI
     from fastapi.responses import JSONResponse
 
-    guard = InputGuard(policy)
+    input_guard = InputGuard(policy)
+    output_guard = OutputGuard(output_policy or policy)
     call_upstream = upstream or httpx_upstream()
 
     app = FastAPI(title="llm-firewall", version="0.1.0")
@@ -79,19 +136,50 @@ def create_app(upstream: Upstream | None = None, policy: Policy | None = None):
 
     @app.post("/v1/messages")
     async def messages(body: dict[str, Any]) -> JSONResponse:
-        decision = guard.check(_extract_prompt(body))
-        if decision.blocked:
+        # --- input guard ---
+        in_decision = input_guard.check(_extract_prompt(body))
+        if in_decision.blocked:
             return JSONResponse(
                 status_code=403,
                 content={
                     "error": "blocked_by_firewall",
-                    "score": decision.score,
-                    "reasons": decision.reasons,
+                    "score": in_decision.score,
+                    "reasons": in_decision.reasons,
                 },
             )
+
+        # --- upstream call ---
         status, payload = await call_upstream(body)
-        if decision.action.value == "flag":
-            payload = {**payload, "_firewall": {"action": "flag", "reasons": decision.reasons}}
+
+        # Attach input-flag metadata before the output check so we don't lose it.
+        if in_decision.action.value == "flag":
+            payload = {**payload, "_firewall": {"action": "flag", "reasons": in_decision.reasons}}
+
+        # --- output guard (only on successful upstream responses) ---
+        if status == 200:
+            response_text = _extract_response_text(payload)
+            context = _extract_context(body)
+            out_decision = output_guard.check(response_text, context)
+
+            if out_decision.blocked:
+                return JSONResponse(
+                    status_code=403,
+                    content={
+                        "error": "output_blocked",
+                        "score": out_decision.score,
+                        "reasons": out_decision.reasons,
+                    },
+                )
+
+            if out_decision.action.value == "flag":
+                payload = {
+                    **payload,
+                    "_firewall_output": {
+                        "action": "flag",
+                        "reasons": out_decision.reasons,
+                    },
+                }
+
         return JSONResponse(status_code=status, content=payload)
 
     return app

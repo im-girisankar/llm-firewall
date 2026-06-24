@@ -20,8 +20,28 @@ This repo is built in weekly milestones; each lands as its own commit.
 - **M2 ✅ — input guard.** An ensemble of injection/jailbreak detectors
   (`detectors.py`, in the `llm-redteam` style) scores inbound prompts; the
   guard blocks/allows per policy.
-- **M3 — output guard.** Wire `llm-reliability-kit` hallucination/faithfulness
-  scoring on responses; flag or redact.
+- **M3 ✅ — output guard.** Faithfulness/hallucination scoring of the LLM
+  response is now wired into the proxy.  After a successful upstream call,
+  `OutputGuard` scores the response against the request context and blocks
+  (HTTP 403 `output_blocked`) or flags (`_firewall_output` metadata key)
+  according to the output policy thresholds.
+
+  **How it works.**  `faithfulness_risk(response, context)` is a pure-Python,
+  offline lexical scorer: it splits the response into sentences and checks
+  what fraction of each sentence's content tokens appear in the context.
+  Sentences below the overlap threshold are "unsupported"; the overall risk is
+  the fraction of unsupported sentences.  No network, no heavy deps.
+
+  **Pluggable seam.**  `OutputGuard` accepts an optional `score_fn` argument —
+  any callable `(response, context) -> (float, list[str])`.  Drop in a
+  stronger scorer (e.g. `trust-probe` cosine similarity or the HRI metric from
+  `llm-reliability-kit`) without touching the proxy or policy layers.
+
+  **Context resolution** (priority order): a top-level `context` field in the
+  request body → the `system` prompt → empty string (scoring skipped).
+  Scoring against the bare user question alone would produce spurious blocks,
+  so faithfulness is only evaluated when an explicit reference is present.
+
 - **M4 — streaming, YAML policy config, request logging/dashboard, demo.**
 
 ## Design
